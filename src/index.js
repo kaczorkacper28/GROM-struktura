@@ -13,9 +13,32 @@ let data = { nextNumber: 1, members: {}, settings: { logChannelId: null } };
 if (fs.existsSync(DATA_FILE)) { try { data = { ...data, ...JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) }; } catch {} }
 function save() { fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2)); }
 
-// Nazwy stopni i elementów poniżej są przeznaczone do serwera RP i nie stanowią odwzorowania rzeczywistej struktury JW GROM.
-const RANKS = ['Kandydat','Operator','Starszy Operator','Dowódca Sekcji','Zastępca Dowódcy Zespołu','Dowódca Zespołu','Zastępca Dowódcy Jednostki','Dowódca Jednostki'];
-const SPECIAL_ROLES = ['Rekrut','Operator GROM','Instruktor','Kadra Dowódcza','Emerytowany Operator','Urlopowany'];
+// Stopnie poniżej są używane na serwerze RP. Nie stanowią odwzorowania obsady stanowisk JW GROM.
+const RANKS = [
+  'Szeregowy',
+  'Starszy szeregowy',
+  'Starszy szeregowy specjalista',
+  'Kapral',
+  'Starszy kapral',
+  'Plutonowy',
+  'Sierżant',
+  'Starszy sierżant',
+  'Młodszy chorąży',
+  'Chorąży',
+  'Starszy chorąży',
+  'Podporucznik',
+  'Porucznik',
+  'Kapitan',
+  'Major',
+  'Podpułkownik',
+  'Pułkownik',
+  'Generał brygady',
+  'Generał dywizji',
+  'Generał broni',
+  'Generał'
+];
+
+const SPECIAL_ROLES = ['Kandydat GROM','Rekrut','Operator GROM','Instruktor','Kadra Dowódcza','Emerytowany Operator','Urlopowany'];
 const ADMIN_ROLES = ['Właściciel','Zarząd','Administrator','Moderator'];
 const ALL_ROLES = [...ADMIN_ROLES, ...RANKS, ...SPECIAL_ROLES];
 const CATEGORIES = {
@@ -52,7 +75,7 @@ const commands = [
 
 function isStaff(member) { return member.permissions.has(PermissionFlagsBits.ManageGuild) || member.permissions.has(PermissionFlagsBits.Administrator); }
 function rankIndex(rank) { return RANKS.indexOf(rank); }
-function ensureMember(userId) { if (!data.members[userId]) data.members[userId] = { rank: 'Kandydat', number: null, joinedAt: null, history: [] }; return data.members[userId]; }
+function ensureMember(userId) { if (!data.members[userId]) data.members[userId] = { rank: 'Szeregowy', number: null, joinedAt: null, history: [] }; return data.members[userId]; }
 async function syncRank(member, rank) {
   const role = member.guild.roles.cache.find(r => r.name === rank);
   if (!role) return false;
@@ -147,7 +170,11 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (interaction.commandName === 'grom-struktura') {
-    return interaction.reply({ embeds: [new EmbedBuilder().setTitle('🎖️ Hierarchia GROM • RP').setDescription(RANKS.map((r,i) => `**${i+1}.** ${r}`).join('\n')).addFields({ name: 'Role funkcyjne', value: SPECIAL_ROLES.join(' • ') }).setFooter({ text: 'Nazewnictwo przeznaczone do serwera RP.' })] });
+    const half = Math.ceil(RANKS.length / 2);
+    const enlisted = RANKS.slice(0, 3).map((r,i) => `**${i+1}.** ${r}`).join('\n');
+    const ncos = RANKS.slice(3, 11).map((r,i) => `**${i+4}.** ${r}`).join('\n');
+    const officers = RANKS.slice(11).map((r,i) => `**${i+12}.** ${r}`).join('\n');
+    return interaction.reply({ embeds: [new EmbedBuilder().setTitle('🎖️ Hierarchia stopni GROM • RP').setDescription('**Korpus szeregowych**\n' + enlisted + '\n\n**Korpus podoficerów i chorążych**\n' + ncos + '\n\n**Korpus oficerów**\n' + officers).addFields({ name: 'Role funkcyjne', value: SPECIAL_ROLES.join(' • ') }).setFooter({ text: 'Nazewnictwo stopni użyte na serwerze RP.' })] });
   }
 
   if (interaction.commandName === 'grom-panel') {
