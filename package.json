@@ -1,0 +1,16 @@
+{
+  "name": "grom-discord-bot",
+  "version": "1.0.0",
+  "description": "Bot Discord dla serwera GROM RP",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.22.1",
+    "dotenv": "^17.2.1"
+  }
+}
