@@ -52,8 +52,6 @@ function save() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-// Stopnie używane na serwerze GROM RP.
-// Bot NIE tworzy tych ról automatycznie.
 const RANKS = [
   'Szeregowy',
   'Starszy szeregowy',
@@ -78,12 +76,106 @@ const RANKS = [
   'Generał'
 ];
 
+// Role, które mają dostęp do części wewnętrznej GROM.
+// Jeśli którejś roli nie ma na serwerze, bot ją po prostu pomija.
+const GROM_ACCESS_ROLES = [
+  'Kandydat',
+  'Rekrut',
+  'Kadra GROM',
+  'Dowództwo GROM',
+  ...RANKS
+];
+
 const TICKET_TYPES = {
   pomoc: { label: '🆘 Pomoc', description: 'Pomoc techniczna lub organizacyjna' },
   kadry: { label: '🎖️ Kadry', description: 'Sprawy funkcjonariuszy i kadry' },
   skarga: { label: '⚠️ Skarga', description: 'Zgłoszenie dotyczące zachowania lub sytuacji' },
   wspolpraca: { label: '🤝 Współpraca', description: 'Sprawy współpracy i kontaktu z GROM RP' }
 };
+
+// Pełna struktura serwera. Bot tworzy tylko brakujące elementy i nie usuwa istniejących.
+const SERVER_STRUCTURE = [
+  {
+    name: '📂 STEFA OBYWATELA',
+    citizen: true,
+    channels: [
+      '📜・regulamin',
+      '📢・komunikaty',
+      'ℹ️・informacje-dla-obywateli',
+      '🎫・centrum-ticketów',
+      '💬・rozmowy',
+      '📝・podania',
+      '📩・wyniki-podań',
+      '📝・egzamin',
+      '📩・wyniki-egzaminu',
+      '❓・najczęstsze-pytania',
+      '📞・kontakt-z-grom'
+    ]
+  },
+  {
+    name: '🏅 DOWÓDZTWO GROM',
+    channels: [
+      '📣・rozkazy',
+      '🎖️・dowództwo',
+      '📁・decyzje-kadry',
+      '📝・odprawy',
+      '📜・regulamin-wewnętrzny'
+    ]
+  },
+  {
+    name: '🛡️ SŁUŻBA GROM',
+    channels: [
+      '🛡️・służba',
+      '📊・grafik',
+      '📋・raporty',
+      '🚨・meldunki',
+      '📍・działania-operacyjne'
+    ]
+  },
+  {
+    name: '📂 KADRY I DOKUMENTACJA GROM',
+    channels: [
+      '👤・kadra',
+      '📁・dokumentacja',
+      '🪪・numery-grom',
+      '📈・awanse-i-degradacje',
+      '🎖️・stopnie'
+    ]
+  },
+  {
+    name: '🎯 SZKOLENIA GROM',
+    channels: [
+      '🎯・szkolenia',
+      '📚・materiały-szkoleniowe',
+      '🏆・wyniki-szkoleń',
+      '📝・testy-szkoleniowe'
+    ]
+  },
+  {
+    name: '📻 ŁĄCZNOŚĆ GROM',
+    channels: [
+      '📻・łączność',
+      '💬・rozmowy-kadry',
+      '📢・odprawy-łączności'
+    ]
+  },
+  {
+    name: '📋 LOGI SYSTEMOWE GROM',
+    channels: [
+      '📋・logi-kadrowe',
+      '🎫・logi-ticketów',
+      '⚙️・logi-systemowe',
+      '📁・archiwum'
+    ]
+  },
+  {
+    name: '🎫 TICKETY GROM',
+    channels: [
+      '🎫・centrum-ticketów-grom',
+      '📁・archiwum-ticketów'
+    ]
+  }
+];
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
@@ -135,6 +227,11 @@ const commands = [
     .setDescription('Pokazuje hierarchię stopni GROM RP'),
 
   new SlashCommandBuilder()
+    .setName('grom-utworz-strukture')
+    .setDescription('Tworzy brakujące kategorie i kanały GROM oraz ustawia widoczność')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
     .setName('grom-ticket-panel')
     .setDescription('Wysyła panel ticketów GROM')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -165,6 +262,10 @@ function findRankRole(guild, rank) {
   return guild.roles.cache.find(role => role.name === rank);
 }
 
+function getGromRoles(guild) {
+  return guild.roles.cache.filter(role => GROM_ACCESS_ROLES.includes(role.name));
+}
+
 async function syncRank(member, rank) {
   const targetRole = findRankRole(member.guild, rank);
   if (!targetRole) return false;
@@ -182,7 +283,6 @@ async function syncRank(member, rank) {
 
 async function logAction(guild, title, description) {
   if (!data.settings.logChannelId) return;
-
   const channel = guild.channels.cache.get(data.settings.logChannelId);
   if (!channel || !channel.isTextBased()) return;
 
@@ -193,6 +293,70 @@ async function logAction(guild, title, description) {
     .setFooter({ text: 'GROM • System kadrowy RP' });
 
   await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
+function categoryOverwrites(guild, citizen) {
+  if (citizen) {
+    return [{
+      id: guild.id,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
+    }];
+  }
+
+  const overwrites = [{
+    id: guild.id,
+    deny: [PermissionFlagsBits.ViewChannel]
+  }];
+
+  for (const role of getGromRoles(guild).values()) {
+    overwrites.push({
+      id: role.id,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages]
+    });
+  }
+
+  return overwrites;
+}
+
+async function ensureServerStructure(guild) {
+  const summary = { categoriesCreated: 0, channelsCreated: 0, permissionsUpdated: 0 };
+
+  for (const section of SERVER_STRUCTURE) {
+    let category = guild.channels.cache.find(c =>
+      c.type === ChannelType.GuildCategory && c.name === section.name
+    );
+
+    if (!category) {
+      category = await guild.channels.create({
+        name: section.name,
+        type: ChannelType.GuildCategory,
+        permissionOverwrites: categoryOverwrites(guild, !!section.citizen)
+      });
+      summary.categoriesCreated++;
+    } else {
+      await category.permissionOverwrites.set(categoryOverwrites(guild, !!section.citizen)).catch(() => {});
+      summary.permissionsUpdated++;
+    }
+
+    for (const channelName of section.channels) {
+      let channel = guild.channels.cache.find(c =>
+        c.type === ChannelType.GuildText && c.name === channelName
+      );
+
+      if (!channel) {
+        channel = await guild.channels.create({
+          name: channelName,
+          type: ChannelType.GuildText,
+          parent: category.id
+        });
+        summary.channelsCreated++;
+      } else if (channel.parentId !== category.id) {
+        await channel.setParent(category.id, { lockPermissions: true }).catch(() => {});
+      }
+    }
+  }
+
+  return summary;
 }
 
 function ticketPanel() {
@@ -230,10 +394,8 @@ async function createTicket(interaction, type) {
   const info = TICKET_TYPES[type];
   const safeName = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 18);
   const channelName = `ticket-${type}-${safeName}`.slice(0, 90);
-
-  const staffRoles = interaction.guild.roles.cache.filter(role =>
-    role.id !== interaction.guild.id &&
-    (role.permissions.has(PermissionFlagsBits.ManageGuild) || role.permissions.has(PermissionFlagsBits.Administrator))
+  const ticketCategory = interaction.guild.channels.cache.find(c =>
+    c.type === ChannelType.GuildCategory && c.name === '🎫 TICKETY GROM'
   );
 
   const overwrites = [
@@ -242,13 +404,17 @@ async function createTicket(interaction, type) {
     { id: interaction.client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] }
   ];
 
-  for (const role of staffRoles.values()) {
-    overwrites.push({ id: role.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages] });
+  for (const role of getGromRoles(interaction.guild).values()) {
+    overwrites.push({
+      id: role.id,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages]
+    });
   }
 
   const channel = await interaction.guild.channels.create({
     name: channelName,
     type: ChannelType.GuildText,
+    parent: ticketCategory?.id,
     topic: `GROM • ${info.label} • Autor: ${interaction.user.tag}`,
     permissionOverwrites: overwrites
   });
@@ -285,13 +451,20 @@ client.once('clientReady', async readyClient => {
       Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
       { body: commands }
     );
+
+    const guild = readyClient.guilds.cache.get(GUILD_ID);
+    if (guild) {
+      const summary = await ensureServerStructure(guild);
+      console.log(`🏗️ Struktura GROM: +${summary.categoriesCreated} kategorii, +${summary.channelsCreated} kanałów.`);
+    }
+
     console.log(`✅ ${readyClient.user.tag} online`);
     console.log('✅ Komendy GROM zarejestrowane.');
-    console.log('ℹ️ Bot nie tworzy automatycznie ról, kategorii ani struktury serwera.');
-    console.log('ℹ️ Tickety są tworzone dopiero po użyciu panelu.');
-    console.log('ℹ️ Podania i egzamin są obsługiwane przez osobne boty.');
+    console.log('✅ Strefa obywatela jest publiczna.');
+    console.log('🔒 Strefy GROM są widoczne tylko dla ról GROM.');
+    console.log('🎫 Tickety są tworzone w kategorii TICKETY GROM.');
   } catch (error) {
-    console.error('❌ Błąd rejestracji komend:', error);
+    console.error('❌ Błąd uruchamiania GROM:', error);
   }
 });
 
@@ -305,7 +478,9 @@ client.on('interactionCreate', async interaction => {
           await createTicket(interaction, action);
         } catch (error) {
           console.error('❌ Błąd tworzenia ticketu:', error);
-          if (!interaction.replied) await interaction.reply({ content: '❌ Nie udało się utworzyć ticketu. Sprawdź uprawnienia bota do tworzenia kanałów.', ephemeral: true });
+          if (!interaction.replied) {
+            await interaction.reply({ content: '❌ Nie udało się utworzyć ticketu. Sprawdź uprawnienia bota do tworzenia kanałów.', ephemeral: true });
+          }
         }
         return;
       }
@@ -361,7 +536,9 @@ client.on('interactionCreate', async interaction => {
     record.history.push({ type: 'zmiana-stopnia', from: oldRank, to: newRank, by: interaction.user.id, at: new Date().toISOString() });
     save();
     const synced = await syncRank(member, newRank);
-    const message = synced ? `🎖️ ${user}: **${oldRank}** → **${newRank}**. Rola została zsynchronizowana.` : `🎖️ ${user}: **${oldRank}** → **${newRank}**. ⚠️ Rola **${newRank}** nie istnieje — bot jej nie utworzy.`;
+    const message = synced
+      ? `🎖️ ${user}: **${oldRank}** → **${newRank}**. Rola została zsynchronizowana.`
+      : `🎖️ ${user}: **${oldRank}** → **${newRank}**. ⚠️ Rola **${newRank}** nie istnieje — bot jej nie utworzy.`;
     await interaction.reply(message);
     await logAction(guild, 'Zmiana stopnia', `**${user.tag}**: ${oldRank} → **${newRank}**. Wykonał: ${interaction.user}.`);
     return;
@@ -376,7 +553,9 @@ client.on('interactionCreate', async interaction => {
     const current = rankIndex(record.rank);
     const direction = interaction.commandName === 'grom-awans' ? 1 : -1;
     const next = current + direction;
-    if (next < 0 || next >= RANKS.length) return interaction.reply({ content: `ℹ️ Nie można wykonać operacji dla stopnia **${record.rank}**.`, ephemeral: true });
+    if (next < 0 || next >= RANKS.length) {
+      return interaction.reply({ content: `ℹ️ Nie można wykonać operacji dla stopnia **${record.rank}**.`, ephemeral: true });
+    }
     const oldRank = record.rank;
     const newRank = RANKS[next];
     record.rank = newRank;
@@ -413,13 +592,37 @@ client.on('interactionCreate', async interaction => {
     const channel = interaction.options.getChannel('kanal');
     data.settings.logChannelId = channel.id;
     save();
-    await interaction.reply(`✅ Ustawiono istniejący kanał logów: ${channel}. Bot nie utworzył kanału.`);
+    await interaction.reply(`✅ Ustawiono istniejący kanał logów: ${channel}.`);
     await logAction(guild, 'Konfiguracja logów', `Kanał logów ustawiony przez ${interaction.user}: ${channel}.`);
     return;
   }
 
   if (interaction.commandName === 'grom-struktura') {
-    return interaction.reply({ embeds: [new EmbedBuilder().setTitle('🇵🇱 GROM • Hierarchia RP').setDescription(RANKS.map((rank, index) => `**${index + 1}.** ${rank}`).join('\n')).setFooter({ text: 'GROM • Bot nie tworzy ról automatycznie.' })] });
+    return interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setTitle('🇵🇱 GROM • Hierarchia RP')
+        .setDescription(RANKS.map((rank, index) => `**${index + 1}.** ${rank}`).join('\n'))
+        .setFooter({ text: 'GROM • System stopni RP' })]
+    });
+  }
+
+  if (interaction.commandName === 'grom-utworz-strukture') {
+    if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ Brak uprawnień.', ephemeral: true });
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const summary = await ensureServerStructure(guild);
+      await interaction.editReply(
+        `✅ **Struktura GROM została sprawdzona.**\n` +
+        `📂 Utworzono kategorii: **${summary.categoriesCreated}**\n` +
+        `📝 Utworzono kanałów: **${summary.channelsCreated}**\n` +
+        `🔒 Zaktualizowano uprawnienia: **${summary.permissionsUpdated}**\n\n` +
+        `👥 Strefa obywatela = publiczna\n🛡️ Strefy GROM = tylko role GROM.`
+      );
+    } catch (error) {
+      console.error('❌ Błąd struktury:', error);
+      await interaction.editReply('❌ Nie udało się utworzyć całej struktury. Sprawdź, czy bot ma **Zarządzanie kanałami** i **Zarządzanie uprawnieniami**.');
+    }
+    return;
   }
 
   if (interaction.commandName === 'grom-ticket-panel') {
